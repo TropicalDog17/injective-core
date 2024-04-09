@@ -162,6 +162,10 @@ import (
 	wasmxtypes "github.com/InjectiveLabs/injective-core/injective-chain/modules/wasmx/types"
 
 	chaintypes "github.com/InjectiveLabs/injective-core/injective-chain/types"
+
+	feeabsmodule "github.com/osmosis-labs/fee-abstraction/v7/x/feeabs"
+	feeabskeeper "github.com/osmosis-labs/fee-abstraction/v7/x/feeabs/keeper"
+	feeabstypes "github.com/osmosis-labs/fee-abstraction/v7/x/feeabs/types"
 )
 
 func init() {
@@ -202,6 +206,9 @@ var (
 			ibcclientclient.UpgradeProposalHandler,
 			upgradeclient.LegacyProposalHandler,
 			upgradeclient.LegacyCancelProposalHandler,
+			feeabsmodule.UpdateAddHostZoneClientProposalHandler,
+			feeabsmodule.UpdateDeleteHostZoneClientProposalHandler,
+			feeabsmodule.UpdateSetHostZoneClientProposalHandler,
 		}),
 		consensus.AppModuleBasic{},
 		params.AppModuleBasic{},
@@ -219,6 +226,7 @@ var (
 		feegrantmodule.AppModuleBasic{},
 		authzmodule.AppModuleBasic{},
 		packetforward.AppModuleBasic{},
+		feeabsmodule.AppModuleBasic{},
 
 		insurance.AppModuleBasic{},
 		exchange.AppModuleBasic{},
@@ -262,6 +270,7 @@ var (
 		exchangetypes.ModuleName:  true,
 		ocrtypes.ModuleName:       true,
 		wasmxtypes.ModuleName:     true,
+		feeabstypes.ModuleName:    true,
 	}
 )
 
@@ -305,6 +314,8 @@ type InjectiveApp struct {
 	PeggyKeeper           peggyKeeper.Keeper
 	ConsensusParamsKeeper consensusparamkeeper.Keeper
 	PacketForwardKeeper   *packetforwardkeeper.Keeper
+	FeeabsKeeper          feeabskeeper.Keeper
+	ScopedFeeabsKeeper    capabilitykeeper.ScopedKeeper
 
 	// make scoped keepers public for test purposes
 	ScopedIBCKeeper      capabilitykeeper.ScopedKeeper
@@ -386,6 +397,7 @@ func NewInjectiveApp(
 		crisistypes.StoreKey,
 		consensustypes.StoreKey,
 		packetforwardtypes.StoreKey,
+		feeabstypes.StoreKey,
 		// Injective keys
 		exchangetypes.StoreKey,
 		oracletypes.StoreKey,
@@ -425,6 +437,7 @@ func NewInjectiveApp(
 	scopedIBCKeeper := app.CapabilityKeeper.ScopeToModule(ibcexported.ModuleName)
 	scopedTransferKeeper := app.CapabilityKeeper.ScopeToModule(ibctransfertypes.ModuleName)
 	scopedICAHostKeeper := app.CapabilityKeeper.ScopeToModule(icahosttypes.SubModuleName)
+	scopedFeeabsKeeper := app.CapabilityKeeper.ScopeToModule(feeabstypes.ModuleName)
 
 	// use custom Ethermint account
 	app.AccountKeeper = authkeeper.NewAccountKeeper(
@@ -637,12 +650,12 @@ func NewInjectiveApp(
 	// Initialize packet forward middleware router
 	app.PacketForwardKeeper = packetforwardkeeper.NewKeeper(
 		appCodec, app.keys[packetforwardtypes.StoreKey],
-		app.GetSubspace(packetforwardtypes.ModuleName),
 		app.TransferKeeper, // Will be zero-value here. Reference is set later on with SetTransferKeeper.
 		app.IBCKeeper.ChannelKeeper,
 		app.DistrKeeper,
 		app.BankKeeper,
 		hooksICS4Wrapper,
+		authtypes.NewModuleAddress(govtypes.ModuleName).String(),
 	)
 
 	// Create Transfer Keepers
@@ -781,7 +794,8 @@ func NewInjectiveApp(
 		AddRoute(auctiontypes.RouterKey, auction.NewAuctionProposalHandler(app.AuctionKeeper)).
 		AddRoute(ocrtypes.RouterKey, ocr.NewOcrProposalHandler(app.OcrKeeper)).
 		AddRoute(wasmxtypes.RouterKey, wasmx.NewWasmxProposalHandler(app.WasmxKeeper, wasmkeeper.NewLegacyWasmProposalHandler(app.WasmKeeper, GetEnabledProposals()))). //nolint:staticcheck // still using legacy governance, will need to migrate and use the new gov v1 later
-		AddRoute(peggytypes.RouterKey, peggy.NewPeggyProposalHandler(app.PeggyKeeper))
+		AddRoute(peggytypes.RouterKey, peggy.NewPeggyProposalHandler(app.PeggyKeeper)).
+		AddRoute(feeabstypes.RouterKey, feeabsmodule.NewHostZoneProposal(app.FeeabsKeeper))
 
 	govKeeper.SetLegacyRouter(govRouter)
 
@@ -799,6 +813,19 @@ func NewInjectiveApp(
 		AddRoute(oracletypes.ModuleName, oracleModule).
 		AddRoute(wasmtypes.ModuleName, wasmStack)
 
+	app.FeeabsKeeper = feeabskeeper.NewKeeper(
+		appCodec,
+		keys[feeabstypes.StoreKey],
+		app.GetSubspace(feeabstypes.ModuleName),
+		app.StakingKeeper,
+		app.AccountKeeper,
+		app.BankKeeper,
+		app.TransferKeeper,
+		app.IBCKeeper.ChannelKeeper,
+		&app.IBCKeeper.PortKeeper,
+		scopedFeeabsKeeper,
+	)
+	ibcRouter.AddRoute(feeabstypes.ModuleName, feeabsmodule.NewIBCModule(appCodec, app.FeeabsKeeper))
 	// Setting Router will finalize all routes by sealing router
 	// No more routes can be added
 	app.IBCKeeper.SetRouter(ibcRouter)
@@ -860,6 +887,7 @@ func NewInjectiveApp(
 		transfer.NewAppModule(app.TransferKeeper),
 		ibcfee.NewAppModule(app.IBCFeeKeeper),
 		ica.NewAppModule(nil, &app.ICAHostKeeper),
+		feeabsmodule.NewAppModule(appCodec, app.FeeabsKeeper),
 		// Injective app modules
 		exchange.NewAppModule(
 			app.ExchangeKeeper,
@@ -914,7 +942,7 @@ func NewInjectiveApp(
 			app.ExchangeKeeper,
 			app.GetSubspace(wasmxtypes.ModuleName),
 		),
-		packetforward.NewAppModule(app.PacketForwardKeeper),
+		packetforward.NewAppModule(app.PacketForwardKeeper, app.GetSubspace(packetforwardtypes.ModuleName)),
 	)
 
 	// During begin block slashing happens after distr.BeginBlocker so that
@@ -931,6 +959,7 @@ func NewInjectiveApp(
 		evidencetypes.ModuleName, stakingtypes.ModuleName, ibcexported.ModuleName, icatypes.ModuleName, ibcfeetypes.ModuleName,
 		ibchookstypes.ModuleName,
 		packetforwardtypes.ModuleName,
+		feeabstypes.ModuleName,
 		exchangetypes.ModuleName, oracletypes.ModuleName, ocrtypes.ModuleName, tokenfactorytypes.ModuleName, permissionsmodule.ModuleName, ibchookstypes.ModuleName, wasmtypes.ModuleName, wasmxtypes.ModuleName,
 	)
 
@@ -941,7 +970,7 @@ func NewInjectiveApp(
 		feegrant.ModuleName, authz.ModuleName, ibctransfertypes.ModuleName, consensustypes.ModuleName,
 		oracletypes.ModuleName, minttypes.ModuleName, slashingtypes.ModuleName, ibctransfertypes.ModuleName, evidencetypes.ModuleName,
 		capabilitytypes.ModuleName, distrtypes.ModuleName, ibcexported.ModuleName, icatypes.ModuleName, ibcfeetypes.ModuleName,
-		upgradetypes.ModuleName,
+		upgradetypes.ModuleName, feeabstypes.ModuleName,
 		crisistypes.ModuleName, govtypes.ModuleName, stakingtypes.ModuleName, peggytypes.ModuleName,
 		exchangetypes.ModuleName, auctiontypes.ModuleName, insurancetypes.ModuleName, ocrtypes.ModuleName,
 		tokenfactorytypes.ModuleName, permissionsmodule.ModuleName, wasmtypes.ModuleName, ibchookstypes.ModuleName, packetforwardtypes.ModuleName,
@@ -959,7 +988,7 @@ func NewInjectiveApp(
 		slashingtypes.ModuleName, govtypes.ModuleName, minttypes.ModuleName,
 		ibcexported.ModuleName, icatypes.ModuleName, ibcfeetypes.ModuleName, genutiltypes.ModuleName, evidencetypes.ModuleName, ibctransfertypes.ModuleName,
 		paramstypes.ModuleName, authz.ModuleName, upgradetypes.ModuleName, vestingtypes.ModuleName, feegrant.ModuleName,
-		consensustypes.ModuleName, packetforwardtypes.ModuleName,
+		consensustypes.ModuleName, packetforwardtypes.ModuleName, feeabstypes.ModuleName,
 		// Injective modules
 		auctiontypes.ModuleName,
 		oracletypes.ModuleName,
@@ -1018,7 +1047,7 @@ func NewInjectiveApp(
 		ante.NewAnteHandler(
 			app.AccountKeeper, app.BankKeeper, app.FeeGrantKeeper,
 			encodingConfig.TxConfig.SignModeHandler(), keys[wasmtypes.StoreKey],
-			wasmConfig, app.IBCKeeper,
+			wasmConfig, app.IBCKeeper, app.FeeabsKeeper,
 		),
 	)
 
@@ -1037,6 +1066,7 @@ func NewInjectiveApp(
 	app.ScopedIBCKeeper = scopedIBCKeeper
 	app.ScopedTransferKeeper = scopedTransferKeeper
 	app.scopedWasmKeeper = scopedWasmKeeper
+	app.ScopedFeeabsKeeper = scopedFeeabsKeeper
 
 	bus := pubsub.NewServer()
 	app.EventPublisher = stream.NewPublisher(app.StreamEvents, bus)
@@ -1046,6 +1076,7 @@ func NewInjectiveApp(
 	authzcdc.GlobalCdc = codec.NewProtoCodec(interfaceRegistry)
 
 	ante.GlobalCdc = codec.NewProtoCodec(interfaceRegistry)
+
 	return app
 }
 
@@ -1433,6 +1464,7 @@ func initParamsKeeper(
 	paramsKeeper.Subspace(tokenfactorytypes.ModuleName)
 	paramsKeeper.Subspace(permissionsmodule.ModuleName)
 	paramsKeeper.Subspace(wasmxtypes.ModuleName)
+	paramsKeeper.Subspace(feeabstypes.ModuleName)
 	return paramsKeeper
 }
 

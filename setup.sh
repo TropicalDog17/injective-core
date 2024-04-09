@@ -92,7 +92,7 @@ DENOM_DECIMALS='['${INJ},${PEGGY_DENOM_DECIMALS},${IBC_DENOM_DECIMALS}']'
 cat $HOME/.injectived/config/genesis.json | jq '.app_state["exchange"]["denom_decimals"]='${DENOM_DECIMALS} > $HOME/.injectived/config/tmp_genesis.json && mv $HOME/.injectived/config/tmp_genesis.json $HOME/.injectived/config/genesis.json
 
 yes $PASSPHRASE | injectived keys add genesis
-yes $PASSPHRASE | injectived add-genesis-account --chain-id $CHAINID $(yes $PASSPHRASE | injectived keys show genesis -a) 1000000000000000000000000inj,1000000000000000000000000atom,100000000000000000000000000peggy0xdAC17F958D2ee523a2206206994597C13D831ec7,100000000000000000000000000peggy0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599
+yes $PASSPHRASE | injectived add-genesis-account --chain-id $CHAINID $(yes $PASSPHRASE | injectived keys show genesis -a) 1000000000000000000000000inj,10000000000000atom,100000000000000000000000000peggy0xdAC17F958D2ee523a2206206994597C13D831ec7,100000000000000000000000000peggy0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599
 # zero address account
 yes $PASSPHRASE | injectived add-genesis-account --chain-id $CHAINID inj1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqe2hm49 1inj
 
@@ -151,7 +151,7 @@ yes "$USER10_MNEMONIC$NEWLINE$PASSPHRASE" | injectived keys add $USER10_KEY --re
 # Allocate genesis accounts (cosmos formatted addresses)
 yes $PASSPHRASE | injectived add-genesis-account --chain-id $CHAINID $(injectived keys show $WASM_KEY -a) 1000000000000000000000inj
 yes $PASSPHRASE | injectived add-genesis-account --chain-id $CHAINID $(injectived keys show $VAL_KEY -a) 1000000000000000000000inj
-yes $PASSPHRASE | injectived add-genesis-account --chain-id $CHAINID $(injectived keys show $USER1_KEY -a) 1000000000000000000000inj,1000000000000000000000atom,100000000000000000000000000peggy0xdAC17F958D2ee523a2206206994597C13D831ec7,100000000000000000000000000peggy0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599
+yes $PASSPHRASE | injectived add-genesis-account --chain-id $CHAINID $(injectived keys show $USER1_KEY -a) 1000000000000000000000inj,1000000000000000000000atom,100000000000000000000000000peggy0xdAC17F958D2ee523a2206206994597C13D831ec7,100000000000000000000000000peggy0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599,10000000000000000000000000usdt
 yes $PASSPHRASE | injectived add-genesis-account --chain-id $CHAINID $(injectived keys show $USER2_KEY -a) 1000000000000000000000inj,100000000000000000000000000peggy0xdAC17F958D2ee523a2206206994597C13D831ec7,100000000000000000000000000peggy0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599
 yes $PASSPHRASE | injectived add-genesis-account --chain-id $CHAINID $(injectived keys show $USER3_KEY -a) 1000000000000000000000inj
 yes $PASSPHRASE | injectived add-genesis-account --chain-id $CHAINID $(injectived keys show $USER4_KEY -a) 1000000000000000000000inj
