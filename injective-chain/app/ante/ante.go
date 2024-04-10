@@ -3,14 +3,11 @@ package ante
 import (
 	"fmt"
 
-	storetypes "github.com/cosmos/cosmos-sdk/store/types"
-	ibckeeper "github.com/cosmos/ibc-go/v7/modules/core/keeper"
-	log "github.com/xlab/suplog"
-
 	"cosmossdk.io/errors"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	"github.com/cosmos/cosmos-sdk/crypto/types/multisig"
+	storetypes "github.com/cosmos/cosmos-sdk/store/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	"github.com/cosmos/cosmos-sdk/types/tx/signing"
@@ -18,6 +15,10 @@ import (
 	authsigning "github.com/cosmos/cosmos-sdk/x/auth/signing"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	ibcante "github.com/cosmos/ibc-go/v7/modules/core/ante"
+	ibckeeper "github.com/cosmos/ibc-go/v7/modules/core/keeper"
+	feeabsante "github.com/osmosis-labs/fee-abstraction/v7/x/feeabs/ante"
+	feeabskeeper "github.com/osmosis-labs/fee-abstraction/v7/x/feeabs/keeper"
+	log "github.com/xlab/suplog"
 
 	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
 	wasmTypes "github.com/CosmWasm/wasmd/x/wasm/types"
@@ -77,6 +78,7 @@ func NewAnteHandler(
 	txCounterStoreKey storetypes.StoreKey,
 	wasmConfig wasmTypes.WasmConfig,
 	ibcKeeper *ibckeeper.Keeper,
+	feeabsKeeper feeabskeeper.Keeper,
 ) sdk.AnteHandler {
 	return func(
 		ctx sdk.Context, tx sdk.Tx, sim bool,
@@ -99,13 +101,14 @@ func NewAnteHandler(
 							authante.NewSetUpContextDecorator(),                                      // outermost AnteDecorator. SetUpContext must be called first
 							wasmkeeper.NewLimitSimulationGasDecorator(wasmConfig.SimulationGasLimit), // after setup context to enforce limits early
 							wasmkeeper.NewCountTXDecorator(txCounterStoreKey),
+							feeabsante.NewFeeAbstrationMempoolFeeDecorator(feeabsKeeper),
 							authante.NewValidateBasicDecorator(),
 							authante.NewTxTimeoutHeightDecorator(),
 							authante.NewValidateMemoDecorator(ak),
 							authante.NewConsumeGasForTxSizeDecorator(ak),
 							authante.NewSetPubKeyDecorator(ak), // SetPubKeyDecorator must be called before all signature verification decorators
 							authante.NewValidateSigCountDecorator(ak),
-							NewDeductFeeDecorator(ak, bankKeeper), // overidden for fee delegation
+							feeabsante.NewFeeAbstractionDeductFeeDecorate(ak, bankKeeper, feeabsKeeper, feegrantKeeper),
 							authante.NewSigGasConsumeDecorator(ak, DefaultSigVerificationGasConsumer),
 							NewEip712SigVerificationDecorator(ak, signModeHandler), // overidden for EIP712 Tx signatures
 							authante.NewIncrementSequenceDecorator(ak),             // innermost AnteDecorator
